@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual-Write Problem: Solution Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Warm Neutral -->
+    <!-- Application Structure Plan: The SPA is designed as a "Solution Explorer." It transforms the static table into an interactive dashboard. The core structure includes: 1) A header and introduction explaining the dual-write problem. 2) Interactive filter controls (by Consistency and Type) allowing users to narrow down solutions based on their primary architectural drivers. 3) A dynamic radar chart to visually compare the trade-offs (Performance vs. Complexity) of the filtered solutions. 4) A responsive grid of cards, where each card represents a solution and can be clicked to reveal full details in a modal window. This structure was chosen to facilitate active exploration and comparison, guiding the user from a high-level visual overview to detailed information, which is more effective for decision-making than a static table. -->
+    <!-- Visualization & Content Choices: Report Info -> Dual-write solutions. Goal -> Compare solutions and understand trade-offs. Viz/Presentation Method -> An interactive card layout for individual solutions and a dynamic Radar Chart (from Chart.js) to compare multiple solutions on key axes (Performance, Complexity). Interaction -> Users can filter the solutions, which dynamically updates both the cards displayed and the data in the radar chart. Clicking a card opens a modal with detailed information. Justification -> This approach makes complex data digestible. The card layout is clean and scannable. The radar chart offers an immediate visual summary of complex trade-offs, which is much faster to interpret than text. The modal keeps the main interface uncluttered while providing deep-dive information on demand. Library/Method -> Chart.js on a Canvas element, with Vanilla JS for all interactions and DOM manipulation. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FDFBF8;
+            color: #4A4A4A;
+        }
+        .card {
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .modal-bg {
+            transition: opacity 0.3s ease;
+        }
+        .modal-box {
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+        .chart-container {
+            position: relative;
+            margin: auto;
+            height: 40vh;
+            width: 100%;
+            max-width: 600px;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        .active-filter {
+            background-color: #3B82F6;
+            color: white;
+            border-color: #3B82F6;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div id="app" class="container mx-auto px-4 py-8 md:py-12">
+
+        <header class="text-center mb-10">
+            <h1 class="text-4xl md:text-5xl font-bold text-slate-800 mb-2">Dual-Write Solution Explorer</h1>
+            <p class="text-lg text-slate-600 max-w-3xl mx-auto">
+                The dual-write problem is a common challenge in distributed systems. This interactive tool helps you explore and compare architectural patterns to solve it, based on their trade-offs in consistency, complexity, and performance.
+            </p>
+        </header>
+
+        <section id="controls" class="mb-10 p-6 bg-white rounded-2xl shadow-sm">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                <div class="flex-1">
+                    <h3 class="font-semibold text-slate-700 mb-2">Filter by Consistency Model:</h3>
+                    <div id="consistency-filter" class="flex flex-wrap gap-2">
+                        <button data-filter="All" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium active-filter">All</button>
+                        <button data-filter="Eventual Consistency" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium">Eventual Consistency</button>
+                        <button data-filter="Strong Consistency (ACID)" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium">Strong Consistency</button>
+                    </div>
+                </div>
+                <div class="flex-1">
+                     <h3 class="font-semibold text-slate-700 mb-2">Filter by Pattern Type:</h3>
+                    <div id="type-filter" class="flex flex-wrap gap-2">
+                        <button data-filter="All" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium active-filter">All Types</button>
+                        <button data-filter="Event-Driven / Asynchronous" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium">Event-Driven</button>
+                        <button data-filter="Distributed Transaction / Synchronous" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium">Distributed Transaction</button>
+                        <button data-filter="Choreographed / Orchestrated Asynchronous Transaction" class="filter-btn px-4 py-2 border rounded-full text-sm font-medium">Saga / TCC</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="visualization" class="mb-12">
+             <h2 class="text-2xl font-bold text-center text-slate-800 mb-4">Visual Comparison</h2>
+             <p class="text-center text-slate-600 mb-6 max-w-2xl mx-auto">This radar chart visualizes the trade-offs between Performance and Complexity for the selected solutions. A higher performance score is better, while a lower complexity score is better.</p>
+            <div class="chart-container bg-white p-4 rounded-2xl shadow-sm">
+                <canvas id="solutionsChart"></canvas>
+            </div>
+        </section>
+        
+        <main id="solutions-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        </main>
+
+    </div>
+
+    <div id="solution-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden">
+        <div class="modal-bg fixed inset-0 bg-black bg-opacity-60" id="modal-bg"></div>
+        <div class="modal-box bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto relative transform scale-95 opacity-0" id="modal-box">
+            <div class="sticky top-0 bg-white/80 backdrop-blur-sm p-6 border-b z-10 flex justify-between items-center">
+                <h2 id="modal-title" class="text-2xl font-bold text-slate-800"></h2>
+                <button id="modal-close" class="text-slate-500 hover:text-slate-800">&times;</button>
+            </div>
+            <div id="modal-content" class="p-6">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const solutionsData = [
+            { 
+                solution: "Transactional Outbox", 
+                type: "Event-Driven / Asynchronous", 
+                howItWorks: "Writes business data and an event to an 'outbox' table in the same local transaction. A separate process publishes the event from the outbox to a message broker.", 
+                keyCharacteristic: "Guarantees atomicity between state change and the *intention* to publish an event using a single local transaction.", 
+                bestFor: "General-purpose, reliable event publishing in microservices architectures where loose coupling is desired.", 
+                consistency: "Eventual Consistency", 
+                complexity: "Moderate", 
+                performance: "Good", 
+                advantages: "High reliability, no distributed transactions, services remain decoupled, at-least-once delivery is guaranteed.", 
+                disadvantages: "Requires an extra table and publisher logic, introduces some latency for event propagation, potential for event ordering issues if not managed." 
+            },
+            { 
+                solution: "Transactional Log Tailing (CDC)", 
+                type: "Event-Driven / Asynchronous", 
+                howItWorks: "A service monitors the database's transaction log (e.g., binlog, WAL). Committed changes are captured from the log and published as events.", 
+                keyCharacteristic: "Externalizes event publishing by tapping directly into the database's commit log, ensuring every committed change is captured.", 
+                bestFor: "Scenarios needing very high reliability and low-latency event propagation without modifying existing application code.", 
+                consistency: "Eventual Consistency", 
+                complexity: "High", 
+                performance: "Excellent", 
+                advantages: "No application code changes needed, highly reliable, low performance impact on the source database, captures all changes (inserts, updates, deletes).", 
+                disadvantages: "High operational complexity (requires tools like Debezium), depends on database-specific log formats, complex to set up and maintain the CDC pipeline." 
+            },
+            { 
+                solution: "Listen to Yourself", 
+                type: "Event-Driven / Asynchronous", 
+                howItWorks: "A service first publishes an 'intent' event to a message broker. It then subscribes to its own event and performs the database write only after consuming it.", 
+                keyCharacteristic: "Reverses the order of operations (publish then write), relying on the message broker for durability and retries.", 
+                bestFor: "Systems where the initial response to a user can be asynchronous and eventual processing is acceptable.", 
+                consistency: "Eventual Consistency", 
+                complexity: "Moderate", 
+                performance: "Good", 
+                advantages: "Decouples the initial request from the database write, can improve perceived performance for the user.", 
+                disadvantages: "Semantically awkward (publishing an event for something that hasn't happened), other services might consume the event prematurely, requires idempotent consumers." 
+            },
+            { 
+                solution: "Two-Phase Commit (2PC)", 
+                type: "Distributed Transaction / Synchronous", 
+                howItWorks: "A coordinator manages two phases: 1) Prepare: all participants vote if they can commit. 2) Commit: if all vote yes, the coordinator tells them to commit; otherwise, abort.", 
+                keyCharacteristic: "A blocking, synchronous protocol that enforces atomicity across all participants.", 
+                bestFor: "Legacy systems or environments requiring strong, immediate consistency where all participants support the protocol. Generally avoided in modern microservices.", 
+                consistency: "Strong Consistency (ACID)", 
+                complexity: "High", 
+                performance: "Poor", 
+                advantages: "Guarantees atomic writes across multiple systems, providing strong consistency.", 
+                disadvantages: "Blocking protocol (reduces availability), coordinator is a single point of failure, poor performance and scalability, not widely supported by modern technologies." 
+            },
+            { 
+                solution: "Three-Phase Commit (3PC)", 
+                type: "Distributed Transaction / Synchronous", 
+                howItWorks: "An extension of 2PC that adds a 'pre-commit' phase to reduce the risk of blocking if the coordinator fails.", 
+                keyCharacteristic: "A non-blocking (in most cases) variant of 2PC designed to improve availability.", 
+                bestFor: "High-availability systems requiring strong consistency that can tolerate extreme complexity. Rarely used in practice.", 
+                consistency: "Strong Consistency (ACID)", 
+                complexity: "Very High", 
+                performance: "Very Poor", 
+                advantages: "Reduces the blocking problem of 2PC, thereby improving availability in some failure scenarios.", 
+                disadvantages: "Higher latency than 2PC, does not solve the network partition problem, extremely complex, and not widely implemented or used." 
+            },
+            { 
+                solution: "Saga", 
+                type: "Choreographed / Orchestrated Asynchronous Transaction", 
+                howItWorks: "A business process is broken into a sequence of local transactions. Each step updates one service and triggers the next. Failures are handled by executing compensating transactions.", 
+                keyCharacteristic: "Manages failure and maintains consistency through compensating actions, avoiding distributed locks and transactions.", 
+                bestFor: "Complex, multi-step business processes in microservices that can tolerate eventual consistency and require high availability.", 
+                consistency: "Eventual Consistency", 
+                complexity: "High", 
+                performance: "Good", 
+                advantages: "Maintains data consistency without distributed transactions, highly available and scalable, services are loosely coupled.", 
+                disadvantages: "Lacks transaction isolation (can lead to data anomalies if not handled), complex to design and debug, requires robust compensating logic for every step." 
+            },
+            { 
+                solution: "Try-Confirm/Cancel (TCC)", 
+                type: "Choreographed / Orchestrated Asynchronous Transaction", 
+                howItWorks: "A Saga variant where each step has three operations: Try (reserve resources), Confirm (commit the reservation), and Cancel (release the resources), managed by a coordinator.", 
+                keyCharacteristic: "Provides transaction-level control by reserving resources in a 'try' phase before committing them.", 
+                bestFor: "Business transactions where resources must be reserved in advance and held for a short time (e.g., booking systems for flights or hotels).", 
+                consistency: "Eventual Consistency", 
+                complexity: "Very High", 
+                performance: "Moderate", 
+                advantages: "More control over the transaction flow than a standard Saga, suitable for resource reservation scenarios, avoids long-lived database locks.", 
+                disadvantages: "Very high implementation complexity, requires all participating services to adhere to the TCC contract, increases network communication overhead." 
+            }
+        ];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const grid = document.getElementById('solutions-grid');
+            const modal = document.getElementById('solution-modal');
+            const modalBg = document.getElementById('modal-bg');
+            const modalClose = document.getElementById('modal-close');
+            const modalTitle = document.getElementById('modal-title');
+            const modalContent = document.getElementById('modal-content');
+
+            const consistencyFilter = document.getElementById('consistency-filter');
+            const typeFilter = document.getElementById('type-filter');
+
+            let activeConsistencyFilter = 'All';
+            let activeTypeFilter = 'All';
+            let solutionsChart;
+
+            const ratingToScore = {
+                'Excellent': 5, 'Good': 4, 'Moderate': 3, 'Poor': 2, 'Very Poor': 1,
+                'Very High': 1, 'High': 2, 'Moderate': 3, 'Low': 4, 'Very Low': 5
+            };
+
+            const complexityToScore = { 'Very High': 5, 'High': 4, 'Moderate': 3, 'Low': 2, 'Very Low': 1 };
+            const performanceToScore = { 'Excellent': 5, 'Good': 4, 'Moderate': 3, 'Poor': 2, 'Very Poor': 1 };
+
+
+            function createCard(solution) {
+                const card = document.createElement('div');
+                card.className = 'card bg-white rounded-2xl p-6 shadow-sm cursor-pointer border border-transparent hover:border-blue-500';
+                card.innerHTML = `
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">${solution.solution}</h3>
+                    <p class="text-sm text-slate-600 mb-4 h-16">${solution.keyCharacteristic}</p>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="px-3 py-1 rounded-full bg-blue-100 text-blue-800">${solution.consistency}</span>
+                        <span class="px-3 py-1 rounded-full bg-slate-100 text-slate-800">${solution.type.split(' / ')[0]}</span>
+                    </div>
+                `;
+                card.addEventListener('click', () => showModal(solution));
+                return card;
+            }
+
+            function renderCards(data) {
+                grid.innerHTML = '';
+                if (data.length === 0) {
+                    grid.innerHTML = `<p class="text-slate-500 col-span-full text-center">No solutions match the current filters.</p>`;
+                } else {
+                    data.forEach(solution => {
+                        grid.appendChild(createCard(solution));
+                    });
+                }
+            }
+
+            function showModal(solution) {
+                modalTitle.textContent = solution.solution;
+                modalContent.innerHTML = `
+                    <div class="space-y-6">
+                        <div>
+                            <h4 class="font-semibold text-slate-700 mb-1">How It Works</h4>
+                            <p class="text-slate-600">${solution.howItWorks}</p>
+                        </div>
+                         <div>
+                            <h4 class="font-semibold text-slate-700 mb-1">Best For</h4>
+                            <p class="text-slate-600">${solution.bestFor}</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                            <div class="bg-slate-50 p-3 rounded-lg"><span class="font-medium text-slate-800">Consistency:</span> ${solution.consistency}</div>
+                            <div class="bg-slate-50 p-3 rounded-lg"><span class="font-medium text-slate-800">Complexity:</span> ${solution.complexity}</div>
+                            <div class="bg-slate-50 p-3 rounded-lg"><span class="font-medium text-slate-800">Performance:</span> ${solution.performance}</div>
+                        </div>
+                        <div>
+                            <h4 class="font-semibold text-green-700 mb-1">Advantages</h4>
+                            <p class="text-slate-600">${solution.advantages}</p>
+                        </div>
+                         <div>
+                            <h4 class="font-semibold text-red-700 mb-1">Disadvantages</h4>
+                            <p class="text-slate-600">${solution.disadvantages}</p>
+                        </div>
+                    </div>
+                `;
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    document.getElementById('modal-bg').classList.remove('opacity-0');
+                    document.getElementById('modal-box').classList.remove('scale-95', 'opacity-0');
+                }, 10);
+            }
+
+            function closeModal() {
+                 document.getElementById('modal-bg').classList.add('opacity-0');
+                 document.getElementById('modal-box').classList.add('scale-95', 'opacity-0');
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                }, 300);
+            }
+            
+            modalBg.addEventListener('click', closeModal);
+            modalClose.addEventListener('click', closeModal);
+
+            function updateChart(data) {
+                const ctx = document.getElementById('solutionsChart').getContext('2d');
+                const datasets = data.map((item, index) => {
+                    const color = `hsl(${(index * 360 / 7) % 360}, 70%, 60%)`;
+                    return {
+                        label: item.solution,
+                        data: [
+                            performanceToScore[item.performance] || 0,
+                            complexityToScore[item.complexity] || 0
+                        ],
+                        backgroundColor: `hsla(${(index * 360 / 7) % 360}, 70%, 60%, 0.2)`,
+                        borderColor: color,
+                        pointBackgroundColor: color,
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: color
+                    };
+                });
+
+                if (solutionsChart) {
+                    solutionsChart.destroy();
+                }
+
+                solutionsChart = new Chart(ctx, {
+                    type: 'radar',
+                    data: {
+                        labels: ['Performance', 'Complexity'],
+                        datasets: datasets
+                    },
+                    options: {
+                        maintainAspectRatio: false,
+                        scales: {
+                            r: {
+                                beginAtZero: true,
+                                max: 5,
+                                ticks: {
+                                   stepSize: 1,
+                                   backdropColor: 'transparent',
+                                   callback: function(value, index, values) {
+                                        const labels = ['', 'Very Poor', 'Poor', 'Moderate', 'Good', 'Excellent'];
+                                        return labels[value];
+                                   }
+                                },
+                                pointLabels: {
+                                    font: {
+                                        size: 14,
+                                        weight: 'bold'
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        const score = context.raw;
+                                        const labels = {
+                                            'Performance': ['','Very Poor', 'Poor', 'Moderate', 'Good', 'Excellent'],
+                                            'Complexity': ['','Very Low', 'Low', 'Moderate', 'High', 'Very High']
+                                        };
+                                        const axisLabel = context.chart.data.labels[context.dataIndex];
+                                        // A bit of a trick: Complexity scores are inverted for display
+                                        if (axisLabel === 'Complexity') {
+                                           const complexityLabels = ['','Very Low', 'Low', 'Moderate', 'High', 'Very High'];
+                                           label += complexityLabels[score];
+                                        } else {
+                                           label += labels[axisLabel][score];
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function applyFilters() {
+                let filteredData = solutionsData;
+
+                if (activeConsistencyFilter !== 'All') {
+                    filteredData = filteredData.filter(s => s.consistency === activeConsistencyFilter);
+                }
+
+                if (activeTypeFilter !== 'All') {
+                    filteredData = filteredData.filter(s => s.type === activeTypeFilter);
+                }
+
+                renderCards(filteredData);
+                updateChart(filteredData);
+            }
+
+            function setupFilter(filterContainer) {
+                filterContainer.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'BUTTON') {
+                        const filterValue = e.target.dataset.filter;
+                        if(filterContainer.id === 'consistency-filter') {
+                            activeConsistencyFilter = filterValue;
+                        } else {
+                            activeTypeFilter = filterValue;
+                        }
+
+                        filterContainer.querySelectorAll('button').forEach(btn => btn.classList.remove('active-filter'));
+                        e.target.classList.add('active-filter');
+                        
+                        applyFilters();
+                    }
+                });
+            }
+            
+            setupFilter(consistencyFilter);
+            setupFilter(typeFilter);
+
+            applyFilters();
+        });
+    </script>
+</body>
+</html>
